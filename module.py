@@ -80,6 +80,8 @@ class Encoder(nn.Module):
         x = self.conv1(x)
         text_repr = self.conv_text_repr(x)
         shape_repr = self.conv_shape_repr(x)
+        # print("Encoder_text_size: " + str(text_repr.shape))
+        # print("Encoder_shape_size: " + str(text_repr.shape))
         return text_repr, shape_repr
 
 
@@ -87,7 +89,7 @@ class Manipulator(nn.Module):
     def __init__(self):
         super(Manipulator, self).__init__()
         self.g_ = nn.Sequential(
-            nn.ReflectionPad2d(3),
+            nn.ReflectionPad2d(1),
             nn.Conv2d(
                 in_channels=32,
                 out_channels=32,
@@ -113,8 +115,11 @@ class Manipulator(nn.Module):
         diff = diff * (amp_factor - 1.0)
         diff = self.f_(diff)
         diff = self.res(diff)
+        out = m_b + diff
 
-        return m_a + diff
+        # print("Manipulator_out_size: " + str(out.shape))
+
+        return m_b + diff
 
 
 class Decoder(nn.Module):
@@ -134,7 +139,7 @@ class Decoder(nn.Module):
         self.conv_common = nn.Sequential(
             ResBlock(64, 64, 9),
             nn.UpsamplingNearest2d(scale_factor=2),
-            nn.ReflectionPad2d(1),
+            nn.ReflectionPad2d(4),
             nn.Conv2d(
                 in_channels=64,
                 out_channels=32,
@@ -149,10 +154,14 @@ class Decoder(nn.Module):
         )
 
     def forward(self, text_repr, shape_repr):
+        # print(text_repr.shape)
+        # print(shape_repr.shape)
         text_repr = self.conv_text_repr(text_repr)
+        # print(text_repr.shape)
         x = torch.cat([text_repr, shape_repr], 1)
+        # print(x.shape)
         x = self.conv_common(x)
 
+        # print("Decoder_out_size: " + str(x.shape))
+
         return x
-
-

@@ -11,9 +11,11 @@ import torch.optim
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+from torch.utils.tensorboard import SummaryWriter
 
 from net import dmmm
 from data_loader import DataFromFolder
+from torch.utils.data import DataLoader
 from util import *
 
 parser = argparse.ArgumentParser(description='Arguments of dmmm')
@@ -39,14 +41,21 @@ parser.add_argument('--weight_loss_1', default=1.0, type=float,
                     help='weight texture regularization loss  (default: 1.0)')
 parser.add_argument('--weight_loss_3', default=1.0, type=float,
                     help='weight shape regularization loss  (default: 1.0)')
-parser.add_argument('--gpu', default=0, type=str, help='cuda_visible_devices')
+parser.add_argument('--gpu', default=1, type=str, help='cuda_visible_devices')
 
 args = parser.parse_args()
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 losses_0, losses_1, losses_2, losses_3 = [], [], [], []
+
+# work_dir = 'tensorboard/' + time.strftime("%Y-%m-%d-%H%M", time.localtime())
+work_dir = 'tensorboard/'
+if not os.path.exists(work_dir):
+    os.makedirs(work_dir)
+train_writer = SummaryWriter('{}/{}'.format(work_dir, 'Train'))
+cdi = SummaryWriter('{}/{}'.format(work_dir, 'Eval'))
 
 
 def main():
@@ -56,12 +65,12 @@ def main():
 
     devices_id = [0, 1]
     model = dmmm()
-    model = torch.nn.DataParallel(model, devices_id).cuda()
-    cudnn.benchmark = True
+    # model = torch.nn.DataParallel(model, devices_id).cuda()
+    # cudnn.benchmark = True
 
     # Dataloader
     dataset = DataFromFolder('data/train', img_num=args.num_data, preprocessing=True)
-    data_loader = data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+    data_loader = DataLoader(dataset=dataset, batch_size=args.batch_size, shuffle=True)
 
     # Loss Criterion
     loss_criterion = nn.L1Loss(size_average=True).cuda()
@@ -97,6 +106,10 @@ def main():
             'losses_3': losses_3
         }
 
+        current_loss_avg = current_loss_0_avg + current_loss_1_avg + current_loss_2_avg + current_loss_3_avg
+
+        train_writer.add_scalar('Avg_loss', current_loss_avg, epoch)
+
         # Save Checkpoints
         ckpt_path = os.path.join(ckpt_dir, 'ckpt_e%02d.pth' % epoch)
         torch.save(checkpoint_dict, ckpt_path)
@@ -126,15 +139,15 @@ def train(model, data_loader, epoch, criterion, optimizer, args):
         v_b, m_b = (xb_text_repr, xb_shape_repr)
         v_c, m_c = (xc_text_repr, xc_shape_repr)
 
-        loss_y_y_hat = criterion(y, y_hat)
+        loss_0 = criterion(y, y_hat)
         loss_1 = args.weight_loss_1 * l1_loss(v_a, v_c)
         loss_2 = 0.0
         loss_3 = args.weight_loss_3 * l1_loss(m_c, m_b)
-        loss = loss_y_y_hat + loss_1 + loss_2 + loss_3
+        loss = loss_0 + loss_1 + loss_2 + loss_3
 
-        current_loss_0.update(loss_y_y_hat.item())
+        current_loss_0.update(loss_0.item())
         current_loss_1.update(loss_1.item())
-        current_loss_2.update(loss_2.item())
+        current_loss_2.update(loss_2)
         current_loss_3.update(loss_3.item())
 
         # Update Model
@@ -146,12 +159,21 @@ def train(model, data_loader, epoch, criterion, optimizer, args):
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Loss {loss:.4f}\t'
+                  'Loss_0 {loss_0.val:.4f} ({loss_0.avg:.4f})\t'
                   'Loss_1 {loss_1.val:.4f} ({loss_1.avg:.4f})\t'
                   'Loss_2 {loss_2.val:.4f} ({loss_2.avg:.4f})\t'
                   'Loss_3 {loss_3.val:.4f} ({loss_3.avg:.4f})'.format(
                 epoch, i, len(data_loader), batch_time=batch_time, data_time=data_time,
-                loss=current_loss_0, loss_1=current_loss_1,
-                loss_2=current_loss_2, loss_3=current_loss_3))
+                loss=loss, loss_0=current_loss_0, loss_1=current_loss_1, loss_2=current_loss_2, loss_3=current_loss_3))
 
-        return current_loss_0.avg, current_loss_1.avg, current_loss_2.avg, current_loss_3.avg
+        print('Epoch: [{0}][{1}/{2}]\t'
+              'Loss {loss:.4f}'.format(
+            epoch, i, len(data_loader), batch_time=batch_time, data_time=data_time,
+            loss=loss))
+
+    return current_loss_0.avg, current_loss_1.avg, current_loss_2.avg, current_loss_3.avg
+
+
+if __name__ == '__main__':
+    main()
